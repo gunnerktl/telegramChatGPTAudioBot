@@ -14,16 +14,18 @@ Basic Echobot example, repeats messages.
 Press Ctrl-C on the command line or send a signal to the process to stop the
 bot.
 """
-import os
 import logging
-
-from dotenv import load_dotenv
+import pathlib
 
 import telegram.ext
 from telegram import ForceReply, Update
-from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters, ExtBot, CallbackContext
+from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters, CallbackContext, ExtBot
 
-load_dotenv()
+from src.chat_bot import generate_text_response
+from src.config import config
+from src.speech2text import get_transcription
+from src.text2speech import get_speech_audio_path
+
 
 # Enable logging
 logging.basicConfig(
@@ -33,6 +35,15 @@ logging.basicConfig(
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
+
+
+async def get_voice_filename_drive(bot: ExtBot, file_id: str) -> pathlib.Path:
+    new_file = await bot.get_file(file_id)
+    # download the voice note as a file
+    file_name = pathlib.Path(config.audio_file_path) / f"{file_id}.ogg"
+    await new_file.download_to_drive(file_name)
+
+    return file_name
 
 
 # Define a few command handlers. These usually take the two arguments update and
@@ -58,17 +69,20 @@ async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def echo_audio(update: Update, context: CallbackContext) -> None:
     """Echo the user message."""
-    new_file = await context.bot.get_file(update.message.voice.file_id)
-    # download the voice note as a file
-    await new_file.download_to_drive(f"voice_note.ogg")
+    file_name = await get_voice_filename_drive(context.bot, update.message.voice.file_id)
+    request_text = get_transcription(file_name)
+    predicted = generate_text_response(input_text=request_text)
 
-    await update.message.reply_voice(update.message.voice)
+    await update.message.reply_text(f"request:\n{request_text}\n response:\n{predicted}")
+
+    response_audio = get_speech_audio_path(predicted)
+    await update.message.reply_voice(response_audio)
 
 
 def main() -> None:
     """Start the bot."""
     # Create the Application and pass it your bot's token.
-    application = Application.builder().token(os.getenv('TELEGRAM_TOKEN')).build()
+    application = Application.builder().token(config.telegram_chat_token).build()
 
     # on different commands - answer in Telegram
     application.add_handler(CommandHandler("start", start))
